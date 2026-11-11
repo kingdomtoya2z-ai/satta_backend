@@ -17,7 +17,7 @@ export async function fetchPage(url, marker) {
   const looksRight = (html) =>
     typeof html === "string" && html.length > 1000 && (!marker || html.includes(marker));
   const direct = async () => {
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
     return res.text();
   };
   const viaJina = async () => {
@@ -27,6 +27,7 @@ export async function fetchPage(url, marker) {
         "x-no-cache": "true",
         ...(JINA_API_KEY ? { Authorization: `Bearer ${JINA_API_KEY}` } : {}),
       },
+      signal: AbortSignal.timeout(90000),
     });
     if (!res.ok) return null;
     return res.text();
