@@ -5,7 +5,7 @@ import { v2 as cloudinary } from "cloudinary";
 import Game from "../models/Game.js";
 import Result from "../models/Result.js";
 import Ad from "../models/Ad.js";
-import { scrapeAll } from "../scraper.js";
+import { scrapeAll, scrapeState } from "../scraper.js";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -215,32 +215,20 @@ router.delete("/ads/:id", authMiddleware, async (req, res) => {
   }
 });
 
-let lastScrapeResult = null;
-let lastScrapeTime = null;
-let scrapeInProgress = false;
-
 router.post("/scrape", authMiddleware, async (req, res) => {
-  if (scrapeInProgress) {
-    return res.status(409).json({ error: "Scrape already in progress" });
-  }
-  scrapeInProgress = true;
   try {
     const result = await scrapeAll();
-    lastScrapeResult = result;
-    lastScrapeTime = new Date().toISOString();
     res.json({ message: "Scrape completed", ...result });
   } catch (err) {
-    res.status(500).json({ error: err.message });
-  } finally {
-    scrapeInProgress = false;
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
 router.get("/scrape/status", (req, res) => {
   res.json({
-    lastScrapeTime,
-    scrapeInProgress,
-    lastScrapeResult,
+    lastScrapeTime: scrapeState.lastRunAt,
+    scrapeInProgress: scrapeState.inProgress,
+    lastScrapeResult: scrapeState.lastResult,
   });
 });
 

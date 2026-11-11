@@ -38,7 +38,7 @@ async function doScrape(opts = {}) {
     const result = await scrapeAll(opts);
     console.log(`[Scraper] Done: ${result.gamesScraped} games, ${result.chartDays} chart days`);
   } catch (err) {
-    console.error(`[Scraper] Error:`, err.message);
+    if (err.status !== 409) console.error(`[Scraper] Error:`, err.message);
   } finally {
     scraping = false;
   }

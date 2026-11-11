@@ -160,7 +160,11 @@ async function scrapeAndStoreMonthChart(month, year, gameIdMap, existingGames) {
   return { chartDays: chartData.length, chartGames };
 }
 
-export async function scrapeAll(opts = {}) {
+// Shared scrape state so /api/admin/scrape/status reflects every run
+// (startup, cron and manual) and concurrent runs are prevented globally.
+export const scrapeState = { lastRunAt: null, lastResult: null, inProgress: false };
+
+async function runScrape(opts = {}) {
   // quick mode: only refresh today's/yesterday's results (homepage) plus the
   // previous month's chart — the current month comes from the homepage and
   // older history is static. 2 requests instead of ~11.
@@ -373,10 +377,27 @@ export async function scrapeAll(opts = {}) {
     }
   }
 
-  return {
+  const result = {
     gamesScraped: scrapedGames.length,
     chartColumns: chartCols.length,
     chartDays: totalChartDays,
     chartGamesCount: totalChartGames,
   };
+  scrapeState.lastResult = result;
+  scrapeState.lastRunAt = new Date().toISOString();
+  return result;
+}
+
+export async function scrapeAll(opts = {}) {
+  if (scrapeState.inProgress) {
+    const err = new Error("Scrape already in progress");
+    err.status = 409;
+    throw err;
+  }
+  scrapeState.inProgress = true;
+  try {
+    return await runScrape(opts);
+  } finally {
+    scrapeState.inProgress = false;
+  }
 }
