@@ -4,6 +4,47 @@ import Result from "./models/Result.js";
 
 const TARGET_URL = "https://satta-king-fast.com/";
 
+// Optional Jina Reader routing (https://r.jina.ai) — fetches pages through a
+// real browser so Cloudflare does not block datacenter IPs (e.g. Railway).
+// Enable with SCRAPE_VIA_JINA=1 or by setting JINA_API_KEY; either makes Jina
+// the primary transport. Otherwise direct fetch is tried first and Jina is
+// used as an automatic fallback when the response does not look like the
+// target site (Cloudflare block/challenge page).
+const USE_JINA = process.env.SCRAPE_VIA_JINA === "1";
+const JINA_API_KEY = process.env.JINA_API_KEY || "";
+
+export async function fetchPage(url, marker) {
+  const looksRight = (html) =>
+    typeof html === "string" && html.length > 1000 && (!marker || html.includes(marker));
+  const direct = async () => {
+    const res = await fetch(url);
+    return res.text();
+  };
+  const viaJina = async () => {
+    const res = await fetch(`https://r.jina.ai/${url}`, {
+      headers: {
+        "x-return-format": "html",
+        "x-no-cache": "true",
+        ...(JINA_API_KEY ? { Authorization: `Bearer ${JINA_API_KEY}` } : {}),
+      },
+    });
+    if (!res.ok) return null;
+    return res.text();
+  };
+
+  if (USE_JINA || JINA_API_KEY) {
+    const html = await viaJina().catch(() => null);
+    if (looksRight(html)) return html;
+    const fallback = await direct().catch(() => "");
+    return looksRight(fallback) ? fallback : html || fallback;
+  }
+
+  const html = await direct().catch(() => "");
+  if (looksRight(html)) return html;
+  const jinaHtml = await viaJina().catch(() => null);
+  return looksRight(jinaHtml) ? jinaHtml : html;
+}
+
 function timeToOrder(timeStr) {
   const [time, period] = timeStr.split(" ");
   let [h, m] = time.split(":").map(Number);
@@ -33,13 +74,12 @@ const CHART_URL = "https://satta-king-fast.com/chart.php";
 
 async function scrapeAndStoreMonthChart(month, year, gameIdMap, existingGames) {
   const url = `${CHART_URL}?month=${String(month).padStart(2, "0")}&year=${year}`;
-  let res;
+  let html;
   try {
-    res = await fetch(url);
+    html = await fetchPage(url, "chart-table");
   } catch {
     return { chartDays: 0, chartGames: new Set() };
   }
-  const html = await res.text();
   const $ = cheerio.load(html);
 
   const $chartTable = $("table.chart-table");
@@ -119,9 +159,12 @@ async function scrapeAndStoreMonthChart(month, year, gameIdMap, existingGames) {
   return { chartDays: chartData.length, chartGames };
 }
 
-export async function scrapeAll() {
-  const res = await fetch(TARGET_URL);
-  const html = await res.text();
+export async function scrapeAll(opts = {}) {
+  // quick mode: only refresh today's/yesterday's results (homepage) plus the
+  // previous month's chart — the current month comes from the homepage and
+  // older history is static. 2 requests instead of ~11.
+  const quick = !!opts.quick;
+  const html = await fetchPage(TARGET_URL, "quick-result-board");
   const $ = cheerio.load(html);
 
   const scrapedGames = [];
@@ -311,9 +354,16 @@ export async function scrapeAll() {
   const scrapedMonthNum = chartMonthNum ? parseInt(chartMonthNum) : 0;
   let totalChartDays = chartData.length;
   let totalChartGames = chartGames.size;
+  const currentMonth = new Date().getMonth() + 1;
   for (const year of yearsToScrape) {
     for (let m = 1; m <= 12; m++) {
       if (scrapedMonthNum > 0 && year === currentYear && m >= scrapedMonthNum) continue;
+      if (quick) {
+        // only the previous month matters for daily updates
+        const isPrevMonth = (year === currentYear && m === currentMonth - 1) ||
+          (currentMonth === 1 && year === currentYear - 1 && m === 12);
+        if (!isPrevMonth) continue;
+      }
       const result = await scrapeAndStoreMonthChart(m, year, gameIdMap, scrapedGames);
       totalChartDays += result.chartDays;
       if (result.chartGames.size > totalChartGames) {
