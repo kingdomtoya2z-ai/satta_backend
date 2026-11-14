@@ -6,6 +6,7 @@ const gameSchema = new mongoose.Schema({
   time: { type: String, required: true },
   timeOrder: { type: Number, required: true },
   showInChart: { type: Boolean, default: false },
+  section: { type: String, default: "REST" },
 }, { timestamps: true });
 
 export default mongoose.model("Game", gameSchema);

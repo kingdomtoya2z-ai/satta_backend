@@ -12,10 +12,14 @@ import { scrapeAll } from "./scraper.js";
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use((req, res, next) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  next();
+});
 
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/satta-king";
-const SCRAPE_INTERVAL = process.env.SCRAPE_INTERVAL || 5;
+const SCRAPE_INTERVAL_MS = parseInt(process.env.SCRAPE_INTERVAL_MS || "30000", 10);
 
 mongoose.connect(MONGO_URI)
   .then(() => console.log("MongoDB connected"))
@@ -49,10 +53,10 @@ setTimeout(async () => {
   await doScrape();
 }, 2000);
 
-// Quick refresh every SCRAPE_INTERVAL minutes: today's/yesterday's results
-// plus the previous month's chart — 2 requests, keeps runs short so runs
-// never pile up. Full history is rebuilt daily below.
-cron.schedule(`*/${SCRAPE_INTERVAL} * * * *`, () => doScrape({ quick: true }));
+// Quick refresh every 30s: today's/yesterday's results plus the previous
+// month's chart — keeps the site in sync with satta-king-fast.com. Runs are
+// short (2 requests) and guarded against overlap by doScrape().
+setInterval(() => doScrape({ quick: true }), SCRAPE_INTERVAL_MS);
 
 // Full history rebuild once a day
 cron.schedule("5 4 * * *", () => doScrape());

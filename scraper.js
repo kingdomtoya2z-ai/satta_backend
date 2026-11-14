@@ -17,20 +17,40 @@ export async function fetchPage(url, marker) {
   const looksRight = (html) =>
     typeof html === "string" && html.length > 1000 && (!marker || html.includes(marker));
   const direct = async () => {
-    const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "no-cache",
+      },
+      signal: AbortSignal.timeout(30000),
+    });
     return res.text();
   };
   const viaJina = async () => {
-    const res = await fetch(`https://r.jina.ai/${url}`, {
-      headers: {
-        "x-return-format": "html",
-        "x-no-cache": "true",
-        ...(JINA_API_KEY ? { Authorization: `Bearer ${JINA_API_KEY}` } : {}),
-      },
-      signal: AbortSignal.timeout(90000),
-    });
-    if (!res.ok) return null;
-    return res.text();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch(`https://r.jina.ai/${url}`, {
+          headers: {
+            "x-return-format": "html",
+            "x-no-cache": "true",
+            ...(JINA_API_KEY ? { Authorization: `Bearer ${JINA_API_KEY}` } : {}),
+          },
+          signal: AbortSignal.timeout(90000),
+        });
+        if (!res.ok) {
+          if (attempt === 0) await new Promise(r => setTimeout(r, 2000));
+          continue;
+        }
+        const text = await res.text();
+        if (looksRight(text)) return text;
+        if (attempt === 0) await new Promise(r => setTimeout(r, 2000));
+      } catch {
+        if (attempt === 0) await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+    return null;
   };
 
   if (USE_JINA || JINA_API_KEY) {
@@ -205,10 +225,14 @@ async function runScrape(opts = {}) {
         yesterdayResult: yesterdayResult || "--",
         todayResult: todayResult || "XX",
         highlight: isHighlight,
-        section: sectionName,
+        section: sectionName || "REST",
       });
     });
   });
+
+  if (scrapedGames.length === 0) {
+    throw new Error("No games scraped - target site may be blocked by Cloudflare or changed layout");
+  }
 
   const $chartTable = $("table.chart-table");
   const $headerRow = $chartTable.find("tr.date-name");
@@ -269,6 +293,7 @@ async function runScrape(opts = {}) {
       existing.shortName = game.id;
       existing.time = game.time;
       existing.timeOrder = game.timeOrder;
+      existing.section = game.section || existing.section || "REST";
       if (chartGames.has(game.id)) {
         existing.showInChart = true;
       }
@@ -281,6 +306,7 @@ async function runScrape(opts = {}) {
         time: game.time,
         timeOrder: game.timeOrder,
         showInChart: chartGames.has(game.id),
+        section: game.section || "REST",
       });
       gameIdMap[game.name] = newGame._id;
     }

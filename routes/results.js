@@ -35,8 +35,9 @@ router.get("/today", async (req, res) => {
     const now = new Date();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-    const passed = [];
+    const live = [];
     const next = [];
+    const rest = [];
 
     for (const game of allGames) {
       const todayRes = todayMap[game._id.toString()];
@@ -57,20 +58,19 @@ router.get("/today", async (req, res) => {
         todayResult: hasTodayResult ? todayRes.result : (timeHasPassed ? "--" : "XX"),
         generatedAt: hasTodayResult ? todayRes.generatedAt : null,
         highlight: false,
+        section: game.section || "REST",
       };
 
-      if (timeHasPassed) {
-        passed.push(entry);
-      } else {
-        next.push(entry);
-      }
+      const section = (game.section || "REST").toUpperCase();
+      if (section === "LIVE") live.push(entry);
+      else if (section === "NEXT") next.push(entry);
+      else rest.push(entry);
     }
 
-    passed.sort((a, b) => b.timeOrder - a.timeOrder);
+    // Match source ordering: LIVE descending by time, NEXT/REST ascending.
+    live.sort((a, b) => b.timeOrder - a.timeOrder);
     next.sort((a, b) => a.timeOrder - b.timeOrder);
-
-    const live = passed.slice(0, 5);
-    const rest = passed.slice(5).sort((a, b) => a.timeOrder - b.timeOrder);
+    rest.sort((a, b) => a.timeOrder - b.timeOrder);
 
     res.json({ live, next, rest });
   } catch (err) {
