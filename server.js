@@ -19,7 +19,7 @@ app.use((req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/satta-king";
-const SCRAPE_INTERVAL_MS = parseInt(process.env.SCRAPE_INTERVAL_MS || "30000", 10);
+const SCRAPE_INTERVAL_MS = parseInt(process.env.SCRAPE_INTERVAL_MS || "60000", 10);
 
 mongoose.connect(MONGO_URI)
   .then(() => console.log("MongoDB connected"))
