@@ -20,6 +20,9 @@ app.use((req, res, next) => {
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/satta-king";
 const SCRAPE_INTERVAL_MS = parseInt(process.env.SCRAPE_INTERVAL_MS || "60000", 10);
+// Set DISABLE_SCRAPER=1 to turn off all in-process scraping (e.g. when an
+// external scheduler like GitHub Actions owns the scraping).
+const SCRAPE_ENABLED = process.env.DISABLE_SCRAPER !== "1";
 
 mongoose.connect(MONGO_URI)
   .then(() => console.log("MongoDB connected"))
@@ -48,17 +51,21 @@ async function doScrape(opts = {}) {
   }
 }
 
-// Initial scrape on startup (full: rebuilds all chart history)
-setTimeout(async () => {
-  await doScrape();
-}, 2000);
+if (SCRAPE_ENABLED) {
+  // Initial scrape on startup (full: rebuilds all chart history)
+  setTimeout(async () => {
+    await doScrape();
+  }, 2000);
 
-// Quick refresh every 30s: today's/yesterday's results plus the previous
-// month's chart — keeps the site in sync with satta-king-fast.com. Runs are
-// short (2 requests) and guarded against overlap by doScrape().
-setInterval(() => doScrape({ quick: true }), SCRAPE_INTERVAL_MS);
+  // Quick refresh every 30s: today's/yesterday's results plus the previous
+  // month's chart — keeps the site in sync with satta-king-fast.com. Runs are
+  // short (2 requests) and guarded against overlap by doScrape().
+  setInterval(() => doScrape({ quick: true }), SCRAPE_INTERVAL_MS);
 
-// Full history rebuild once a day
-cron.schedule("5 4 * * *", () => doScrape());
+  // Full history rebuild once a day
+  cron.schedule("5 4 * * *", () => doScrape());
+} else {
+  console.log("[Scraper] In-process scraping disabled (DISABLE_SCRAPER=1). External scheduler owns scraping.");
+}
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

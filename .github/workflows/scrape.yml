@@ -2,7 +2,7 @@ name: Scrape satta-king-fast.com
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "* * * * *"
   workflow_dispatch:
 
 concurrency:
