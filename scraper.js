@@ -6,29 +6,64 @@ const TARGET_URL = "https://satta-king-fast.com/";
 
 // Optional Jina Reader routing (https://r.jina.ai) — fetches pages through a
 // real browser so Cloudflare does not block datacenter IPs (e.g. Railway).
-// Enable with SCRAPE_VIA_JINA=1 or by setting JINA_API_KEY; either makes Jina
-// the primary transport. Otherwise direct fetch is tried first and Jina is
-// used as an automatic fallback when the response does not look like the
-// target site (Cloudflare block/challenge page).
+// Direct fetch is always attempted first (with retries). Jina is used only as
+// a fallback when the direct response does not look like the target site
+// (Cloudflare block/challenge page). A broken Jina account (e.g. insufficient
+// balance) is detected and disabled for the rest of the process.
 const USE_JINA = process.env.SCRAPE_VIA_JINA === "1";
 const JINA_API_KEY = process.env.JINA_API_KEY || "";
+
+// Disabled automatically when Jina returns a balance/insufficient-funds error.
+let jinaDisabled = false;
 
 export async function fetchPage(url, marker) {
   const looksRight = (html) =>
     typeof html === "string" && html.length > 1000 && (!marker || html.includes(marker));
-  const direct = async () => {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Cache-Control": "no-cache",
-      },
-      signal: AbortSignal.timeout(30000),
-    });
-    return res.text();
+
+  const BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "Sec-Ch-Ua": '"Chromium";v="131", "Not_A Brand";v="24"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
   };
+
+  const direct = async () => {
+    // A few attempts with a short delay to ride out transient Cloudflare
+    // challenges / network blips. Direct fetch is the primary transport.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await fetch(url, {
+          headers: BROWSER_HEADERS,
+          signal: AbortSignal.timeout(30000),
+        });
+        const text = await res.text();
+        if (looksRight(text)) return text;
+        if (attempt < 2) await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+      } catch {
+        if (attempt < 2) await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+      }
+    }
+    // Last resort: return whatever the final attempt produced (may be a block page).
+    try {
+      const res = await fetch(url, { headers: BROWSER_HEADERS, signal: AbortSignal.timeout(30000) });
+      return await res.text();
+    } catch {
+      return "";
+    }
+  };
+
   const viaJina = async () => {
+    if (jinaDisabled) return null;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const res = await fetch(`https://r.jina.ai/${url}`, {
@@ -37,34 +72,48 @@ export async function fetchPage(url, marker) {
             "x-no-cache": "true",
             ...(JINA_API_KEY ? { Authorization: `Bearer ${JINA_API_KEY}` } : {}),
           },
-          signal: AbortSignal.timeout(90000),
+          signal: AbortSignal.timeout(60000),
         });
         if (!res.ok) {
-          if (attempt === 0) await new Promise(r => setTimeout(r, 2000));
+          const body = await res.text().catch(() => "");
+          if (res.status === 402 || /insufficient|balance/i.test(body)) {
+            jinaDisabled = true;
+          }
+          if (attempt === 0) await new Promise(r => setTimeout(r, 1000));
           continue;
         }
         const text = await res.text();
         if (looksRight(text)) return text;
-        if (attempt === 0) await new Promise(r => setTimeout(r, 2000));
+        if (attempt === 0) await new Promise(r => setTimeout(r, 1000));
       } catch {
-        if (attempt === 0) await new Promise(r => setTimeout(r, 2000));
+        if (attempt === 0) await new Promise(r => setTimeout(r, 1000));
       }
     }
     return null;
   };
 
-  if (USE_JINA || JINA_API_KEY) {
-    const html = await viaJina().catch(() => null);
-    if (looksRight(html)) return html;
-    const fallback = await direct().catch(() => "");
-    return looksRight(fallback) ? fallback : html || fallback;
+  // Primary: direct fetch (works on non-blocked IPs and locally).
+  let html = await direct().catch(() => "");
+  if (looksRight(html)) return html;
+
+  // Fallback: Jina Reader (only if configured and not disabled).
+  if ((USE_JINA || JINA_API_KEY) && !jinaDisabled) {
+    const jinaHtml = await viaJina().catch(() => null);
+    if (looksRight(jinaHtml)) return jinaHtml;
+    if (jinaHtml) html = jinaHtml;
   }
 
-  const html = await direct().catch(() => "");
-  if (looksRight(html)) return html;
-  const jinaHtml = await viaJina().catch(() => null);
-  return looksRight(jinaHtml) ? jinaHtml : html;
+  // Final retry of direct in case the block was transient.
+  if (!looksRight(html)) {
+    const retry = await direct().catch(() => "");
+    if (looksRight(retry)) return retry;
+    html = retry || html;
+  }
+
+  return html;
 }
+
+
 
 function timeToOrder(timeStr) {
   const [time, period] = timeStr.split(" ");

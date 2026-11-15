@@ -1,0 +1,32 @@
+name: Scrape satta-king-fast.com
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run scraper (quick refresh)
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
+          SCRAPE_VIA_JINA: ${{ secrets.SCRAPE_VIA_JINA }}
+        run: node backfill.mjs --quick
